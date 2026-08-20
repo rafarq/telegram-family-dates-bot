@@ -8,9 +8,11 @@ import html
 import json
 import logging
 import os
+import random
 import tempfile
 from datetime import date, datetime, time
 from pathlib import Path
+from string import Template
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -906,82 +908,6 @@ async def descubrir_canal(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             LOGGER.exception("No se pudo notificar al propietario sobre el canal vinculado")
 
 
-# --- Aviso mensual -----------------------------------------------------------
-
-MESES_ES = [
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
-]
-
-
-def entradas_del_mes(
-    datos: dict[str, list[dict[str, Any]]], anno: int, mes: int
-) -> list[dict[str, Any]]:
-    """Entradas del mes indicado: anuales por día/mes, puntuales por fecha exacta."""
-    entradas: list[dict[str, Any]] = []
-    for item in datos["recurrentes"]:
-        if item["mes"] == mes:
-            entradas.append({"tipo": "recurrente", "nombre": item["nombre"], "dia": item["dia"]})
-    for item in datos["santos"]:
-        if item["mes"] == mes:
-            entradas.append({"tipo": "santo", "nombre": item["nombre"], "dia": item["dia"]})
-    for item in datos["bodas"]:
-        if item["mes"] == mes:
-            entradas.append({"tipo": "boda", "nombre": item["nombre"], "dia": item["dia"]})
-    for item in datos["puntuales"]:
-        if item["fecha"].year == anno and item["fecha"].month == mes:
-            entradas.append({"tipo": "puntual", "nombre": item["nombre"], "dia": item["fecha"].day})
-    return sorted(entradas, key=lambda item: (item["dia"], item["nombre"].casefold()))
-
-
-def _frase_evento_mes(item: dict[str, Any]) -> str:
-    dia = item["dia"]
-    tipo = _tipo_ocasion(item)
-    if tipo == "cumple":
-        return f"el {dia} es el cumpleaños de {_persona_de(item)}"
-    if tipo == "santo":
-        return f"el {dia} es el santo de {item['nombre']}"
-    if tipo == "boda":
-        return f"el {dia} es el aniversario de boda de {item['nombre']}"
-    if tipo == "aniversario":
-        return f"el {dia} se celebra {item['nombre']}"
-    return f"el {dia}: {item['nombre']}"
-
-
-def texto_resumen_mensual(
-    datos: dict[str, list[dict[str, Any]]], anno: int, mes: int
-) -> str | None:
-    """Resumen legible de las fechas de un mes, o None si no hay ninguna."""
-    entradas = entradas_del_mes(datos, anno, mes)
-    if not entradas:
-        return None
-    lineas = [f"📅 Fechas de {MESES_ES[mes - 1]} de {anno}:"]
-    for item in entradas:
-        frase = _frase_evento_mes(item)
-        lineas.append(f"- {frase[0].upper()}{frase[1:]}.")
-    return "\n".join(lineas)
-
-
-async def aviso_mensual(context: ContextTypes.DEFAULT_TYPE) -> str | None:
-    hoy = _ahora_madrid()
-    destino = obtener_chat_familiar()
-    if destino is None:
-        LOGGER.info("Aviso mensual %s: sin canal familiar configurado", hoy.isoformat())
-        return None
-    try:
-        datos = cargar_fechas()
-        texto = texto_resumen_mensual(datos, hoy.year, hoy.month)
-        if texto is None:
-            LOGGER.info("Aviso mensual %s: no hay fechas este mes; no se envía ningún mensaje", hoy.isoformat())
-            return None
-        await context.bot.send_message(destino, texto)
-        LOGGER.info("Aviso mensual %s: enviado", hoy.isoformat())
-        return texto
-    except Exception:
-        LOGGER.exception("Aviso mensual %s: error al procesar o enviar", hoy.isoformat())
-        return None
-
-
 # --- Aviso diario y ciclo de vida ------------------------------------------
 
 def texto_aviso_hoy(
@@ -995,6 +921,64 @@ def texto_aviso_hoy(
     if estado is None:
         estado = cargar_estado()
     return texto_recordatorio(coincidentes, estado)
+
+
+_TIPO_HTML = {
+    "cumple": ("🎂", "#f7971e", "#ffd200", "¡Feliz cumpleaños!"),
+    "santo": ("⛪", "#5b86e5", "#36d1dc", "¡Feliz santo!"),
+    "boda": ("💍", "#c94b9d", "#f57f7f", "¡Feliz aniversario de boda!"),
+    "aniversario": ("📅", "#43cea2", "#185a9d", "¡Felicidades!"),
+}
+
+
+_ETIQUETA_TIPO = {
+    "cumple": "CUMPLEAÑOS",
+    "santo": "SANTO",
+    "boda": "ANIVERSARIO DE BODA",
+    "aniversario": "ANIVERSARIO",
+}
+
+
+def elegir_tarjeta(tipo: str, estado: dict[str, Any]) -> tuple[str, str]:
+    """Elige una tarjeta aleatoria del tipo sin repetir (rotación en estado). Devuelve (archivo, html)."""
+    carpeta = PROJECT_DIR / "web" / "tarjetas" / tipo
+    tarjetas = sorted(p.name for p in carpeta.glob("tarjeta*.html")) if carpeta.exists() else []
+    if not tarjetas:
+        raise FechasError(f"No hay tarjetas para el tipo {tipo}.")
+    usadas = estado.setdefault("tarjetas_usadas", {}).setdefault(tipo, [])
+    disponibles = [t for t in tarjetas if t not in usadas]
+    if not disponibles:
+        usadas.clear()
+        disponibles = tarjetas
+    elegida = random.choice(disponibles)
+    usadas.append(elegida)
+    return elegida, (carpeta / elegida).read_text(encoding="utf-8")
+
+
+def generar_html_felicitacion(
+    coincidentes: list[dict[str, Any]], hoy: date, estado: dict[str, Any] | None = None
+) -> str:
+    """Genera el HTML de felicitación: tarjeta aleatoria del tipo con datos del aviso."""
+    if estado is None:
+        estado = {}
+    tipo = _tipo_ocasion(coincidentes[0]) if coincidentes else "aniversario"
+    if tipo == "puntual":
+        tipo = "aniversario"
+    _, plantilla = elegir_tarjeta(tipo, estado)
+    nombres = [_persona_de(item) for item in coincidentes]
+    mensaje = texto_recordatorio(coincidentes, {})
+    meses_es = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+                "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    fecha = f"{hoy.day} de {meses_es[hoy.month - 1]}"
+    return (
+        plantilla.replace("{{TIPO}}", _ETIQUETA_TIPO[tipo])
+        .replace("{{NOMBRE}}", "<br>".join(nombres))
+        .replace(
+            "{{MENSAJE}}",
+            mensaje.replace("\n", "<br>").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
+        )
+        .replace("{{FECHA}}", fecha)
+    )
 
 
 async def aviso_diario(context: ContextTypes.DEFAULT_TYPE) -> str | None:
@@ -1011,8 +995,27 @@ async def aviso_diario(context: ContextTypes.DEFAULT_TYPE) -> str | None:
                 LOGGER.info("Aviso diario %s: no hay fechas; no se envía ningún mensaje", hoy.isoformat())
                 return None
             coincidentes = fechas_de_hoy(cargar_fechas(), hoy)
+            try:
+                html = generar_html_felicitacion(coincidentes, hoy, estado=estado)
+            except FechasError:
+                LOGGER.exception("Aviso diario %s: sin tarjetas para el tipo; se omite el HTML", hoy.isoformat())
+                html = None
         # Enviar primero y persistir la rotación solo si el envío ha tenido éxito.
         await context.bot.send_message(destino, texto)
+        if html is not None:
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", suffix=".html", delete=False
+                ) as f:
+                    f.write(html)
+                    ruta_html = f.name
+                with open(ruta_html, "rb") as fh:
+                    await context.bot.send_document(
+                        destino, fh, filename="felicitacion.html"
+                    )
+                os.unlink(ruta_html)
+            except Exception:
+                LOGGER.exception("Aviso diario %s: no se pudo enviar el HTML", hoy.isoformat())
         if any(_tipo_ocasion(c) != "puntual" for c in coincidentes):
             async with STATE_LOCK:
                 guardar_estado_atomico(estado)
@@ -1036,7 +1039,6 @@ async def al_iniciar(application: Application) -> None:
     if application.job_queue is None:
         raise RuntimeError("Falta instalar python-telegram-bot con el extra job-queue.")
     application.job_queue.run_daily(aviso_diario, time=hora, name="aviso-diario-familia")
-    application.job_queue.run_monthly(aviso_mensual, when=hora, day=1, name="aviso-mensual-familia")
     await application.bot.set_my_commands(
         [
             BotCommand("start", "Presentación"),
