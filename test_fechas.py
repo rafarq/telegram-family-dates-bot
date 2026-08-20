@@ -25,6 +25,7 @@ from bot import (
     texto_lista,
     texto_lista_personas,
     texto_recordatorio,
+    texto_resumen_mensual,
     validar_datos,
 )
 
@@ -471,3 +472,102 @@ def test_autorizado_para_escribir_solo_owner_o_canal(monkeypatch):
     assert bot.autorizado_para_escribir(_update_fake(user_id=42))
     assert not bot.autorizado_para_escribir(_update_fake(user_id=99))
     assert bot.autorizado_para_escribir(_update_fake(chat_type="channel", user_id=99))
+
+
+def test_resumen_mensual_mezcla_anuales_y_puntual_ordenada():
+    datos = {
+        "recurrentes": [{"nombre": "Cumpleaños de Ana", "dia": 20, "mes": 8}],
+        "santos": [{"nombre": "Lucas", "dia": 24, "mes": 8}],
+        "bodas": [{"nombre": "Lucía y Mario", "dia": 10, "mes": 8}],
+        "puntuales": [{"nombre": "Excursión", "fecha": date(2026, 8, 5)}],
+    }
+
+    texto = texto_resumen_mensual(datos, 2026, 8)
+
+    assert texto is not None
+    lineas = texto.splitlines()
+    assert lineas[0] == "📅 Fechas de agosto de 2026:"
+    orden = [linea for linea in lineas[1:]]
+    assert len(orden) == 4
+    assert "Excursión" in orden[0] and orden[0].startswith("- El 5")
+    assert "Lucía y Mario" in orden[1] and orden[1].startswith("- El 10")
+    assert "Ana" in orden[2] and orden[2].startswith("- El 20")
+    assert "Lucas" in orden[3] and orden[3].startswith("- El 24")
+
+
+def test_resumen_mensual_sin_fechas_devuelve_none():
+    datos = datos_vacios()
+    assert texto_resumen_mensual(datos, 2026, 8) is None
+
+
+def test_resumen_mensual_puntual_solo_del_anno_correcto():
+    datos = {
+        "recurrentes": [],
+        "santos": [],
+        "bodas": [],
+        "puntuales": [
+            {"nombre": "Excursión 2025", "fecha": date(2025, 8, 5)},
+            {"nombre": "Excursión 2026", "fecha": date(2026, 8, 5)},
+        ],
+    }
+
+    texto = texto_resumen_mensual(datos, 2026, 8)
+
+    assert texto is not None
+    assert "Excursión 2026" in texto
+    assert "Excursión 2025" not in texto
+
+
+def test_aviso_mensual_envia_al_canal_si_hay_fechas(monkeypatch):
+    import asyncio
+
+    import bot
+
+    datos = {
+        "recurrentes": [{"nombre": "Cumpleaños de Ana", "dia": 20, "mes": 8}],
+        "santos": [],
+        "bodas": [],
+        "puntuales": [],
+    }
+    monkeypatch.setattr(bot, "cargar_fechas", lambda: datos)
+    monkeypatch.setattr(bot, "_ahora_madrid", lambda: date(2026, 8, 1))
+    monkeypatch.setenv("FAMILY_CHAT_ID", "555")
+
+    enviados = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, texto, **kwargs):
+            enviados.append((chat_id, texto))
+
+    class FakeContext:
+        bot = FakeBot()
+
+    resultado = asyncio.run(bot.aviso_mensual(FakeContext()))
+
+    assert resultado is not None
+    assert enviados == [(555, resultado)]
+    assert "Ana" in resultado
+
+
+def test_aviso_mensual_no_envia_si_no_hay_fechas(monkeypatch):
+    import asyncio
+
+    import bot
+
+    monkeypatch.setattr(bot, "cargar_fechas", lambda: datos_vacios())
+    monkeypatch.setattr(bot, "_ahora_madrid", lambda: date(2026, 8, 1))
+    monkeypatch.setenv("FAMILY_CHAT_ID", "555")
+
+    enviados = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, texto, **kwargs):
+            enviados.append((chat_id, texto))
+
+    class FakeContext:
+        bot = FakeBot()
+
+    resultado = asyncio.run(bot.aviso_mensual(FakeContext()))
+
+    assert resultado is None
+    assert enviados == []

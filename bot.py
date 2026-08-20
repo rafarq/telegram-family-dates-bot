@@ -906,6 +906,82 @@ async def descubrir_canal(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             LOGGER.exception("No se pudo notificar al propietario sobre el canal vinculado")
 
 
+# --- Aviso mensual -----------------------------------------------------------
+
+MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+
+def entradas_del_mes(
+    datos: dict[str, list[dict[str, Any]]], anno: int, mes: int
+) -> list[dict[str, Any]]:
+    """Entradas del mes indicado: anuales por día/mes, puntuales por fecha exacta."""
+    entradas: list[dict[str, Any]] = []
+    for item in datos["recurrentes"]:
+        if item["mes"] == mes:
+            entradas.append({"tipo": "recurrente", "nombre": item["nombre"], "dia": item["dia"]})
+    for item in datos["santos"]:
+        if item["mes"] == mes:
+            entradas.append({"tipo": "santo", "nombre": item["nombre"], "dia": item["dia"]})
+    for item in datos["bodas"]:
+        if item["mes"] == mes:
+            entradas.append({"tipo": "boda", "nombre": item["nombre"], "dia": item["dia"]})
+    for item in datos["puntuales"]:
+        if item["fecha"].year == anno and item["fecha"].month == mes:
+            entradas.append({"tipo": "puntual", "nombre": item["nombre"], "dia": item["fecha"].day})
+    return sorted(entradas, key=lambda item: (item["dia"], item["nombre"].casefold()))
+
+
+def _frase_evento_mes(item: dict[str, Any]) -> str:
+    dia = item["dia"]
+    tipo = _tipo_ocasion(item)
+    if tipo == "cumple":
+        return f"el {dia} es el cumpleaños de {_persona_de(item)}"
+    if tipo == "santo":
+        return f"el {dia} es el santo de {item['nombre']}"
+    if tipo == "boda":
+        return f"el {dia} es el aniversario de boda de {item['nombre']}"
+    if tipo == "aniversario":
+        return f"el {dia} se celebra {item['nombre']}"
+    return f"el {dia}: {item['nombre']}"
+
+
+def texto_resumen_mensual(
+    datos: dict[str, list[dict[str, Any]]], anno: int, mes: int
+) -> str | None:
+    """Resumen legible de las fechas de un mes, o None si no hay ninguna."""
+    entradas = entradas_del_mes(datos, anno, mes)
+    if not entradas:
+        return None
+    lineas = [f"📅 Fechas de {MESES_ES[mes - 1]} de {anno}:"]
+    for item in entradas:
+        frase = _frase_evento_mes(item)
+        lineas.append(f"- {frase[0].upper()}{frase[1:]}.")
+    return "\n".join(lineas)
+
+
+async def aviso_mensual(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    hoy = _ahora_madrid()
+    destino = obtener_chat_familiar()
+    if destino is None:
+        LOGGER.info("Aviso mensual %s: sin canal familiar configurado", hoy.isoformat())
+        return None
+    try:
+        datos = cargar_fechas()
+        texto = texto_resumen_mensual(datos, hoy.year, hoy.month)
+        if texto is None:
+            LOGGER.info("Aviso mensual %s: no hay fechas este mes; no se envía ningún mensaje", hoy.isoformat())
+            return None
+        await context.bot.send_message(destino, texto)
+        LOGGER.info("Aviso mensual %s: enviado", hoy.isoformat())
+        return texto
+    except Exception:
+        LOGGER.exception("Aviso mensual %s: error al procesar o enviar", hoy.isoformat())
+        return None
+
+
 # --- Aviso diario y ciclo de vida ------------------------------------------
 
 def texto_aviso_hoy(
@@ -960,6 +1036,7 @@ async def al_iniciar(application: Application) -> None:
     if application.job_queue is None:
         raise RuntimeError("Falta instalar python-telegram-bot con el extra job-queue.")
     application.job_queue.run_daily(aviso_diario, time=hora, name="aviso-diario-familia")
+    application.job_queue.run_monthly(aviso_mensual, when=hora, day=1, name="aviso-mensual-familia")
     await application.bot.set_my_commands(
         [
             BotCommand("start", "Presentación"),

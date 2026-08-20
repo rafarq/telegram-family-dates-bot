@@ -31,6 +31,10 @@ Cada día a la hora configurada (`AVISO_HORA`, por defecto 09:00 en `Europe/Madr
 - Varias personas el mismo día: cada una recibe su felicitación individual en el mismo mensaje.
 - Eventos puntuales: línea simple `📅 Hoy: ...`, sin felicitación.
 
+## Resumen mensual
+
+El día 1 de cada mes, a la misma hora configurada en `AVISO_HORA` y en `Europe/Madrid`, el bot publica en el canal familiar un único resumen con las fechas de ese mes. Incluye cumpleaños, santos, bodas, aniversarios y eventos puntuales, ordenados por día y redactados en lenguaje natural. Si ese mes no tiene fechas, no publica nada.
+
 ## Instalación
 
 Se necesita Python 3.11 o posterior y [`uv`](https://docs.astral.sh/uv/). Desde el directorio del proyecto:
