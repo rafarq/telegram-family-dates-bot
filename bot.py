@@ -480,7 +480,7 @@ def texto_lista_personas(datos: dict[str, list[dict[str, Any]]]) -> str:
             etiqueta = "Boda"
         lineas.append(f"   - {etiqueta} {fecha}")
     lineas.append("")
-    lineas.append("Para borrar una fecha, usa /lista y /borrar <id>.")
+    lineas.append("Para borrar una fecha, usa /lista y /borrar &lt;id&gt;.")
     return "\n".join(lineas)
 
 
