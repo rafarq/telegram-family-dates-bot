@@ -1,0 +1,4 @@
+python-telegram-bot[job-queue]>=21,<23
+PyYAML>=6,<7
+python-dotenv>=1,<2
+pytest>=8,<10

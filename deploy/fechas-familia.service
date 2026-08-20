@@ -1,0 +1,17 @@
+[Unit]
+Description=Bot de Telegram Familia para fechas importantes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/fechas-familia-bot
+ExecStart=%h/fechas-familia-bot/.venv/bin/python bot.py
+EnvironmentFile=-%h/fechas-familia-bot/.env
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

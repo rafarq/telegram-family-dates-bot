@@ -1,0 +1,16 @@
+# Fechas familiares. Usa dia y mes para las recurrentes, los santos y las bodas, y fecha AAAA-MM-DD para las puntuales.
+recurrentes:
+- nombre: Cumpleaños de María
+  dia: 12
+  mes: 3
+santos:
+- nombre: Jorge
+  dia: 20
+  mes: 8
+bodas:
+- nombre: Lucía y Mario
+  dia: 15
+  mes: 6
+puntuales:
+- nombre: Cena de Nochebuena
+  fecha: 2026-12-24
