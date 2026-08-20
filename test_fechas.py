@@ -401,9 +401,9 @@ def test_texto_lista_personas_agrupa_por_persona_y_avisa_del_borrado():
     texto = texto_lista_personas(datos)
 
     assert "Fechas por persona:" in texto
-    assert "- Martín:" in texto
+    assert "- <b>Martín</b>:" in texto
     assert "   - Santo 20/08" in texto
-    assert "- Lucas:" in texto
+    assert "- <b>Lucas</b>:" in texto
     assert "   - Cumpleaños 12/03" in texto
     assert "Para borrar una fecha, usa /lista y /borrar <id>." in texto
 
@@ -438,7 +438,7 @@ def _update_fake(chat_id: int = 1, chat_type: str = "private", user_id: int = 99
         type = chat_type
 
     class Msg:
-        async def reply_text(self, texto):
+        async def reply_text(self, texto, **kwargs):
             self.texto = texto
 
     class Update:

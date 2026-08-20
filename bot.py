@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -463,7 +464,7 @@ def texto_lista_personas(datos: dict[str, list[dict[str, Any]]]) -> str:
     for item in entradas:
         persona = _persona_de(item)
         if persona != persona_actual:
-            lineas.append(f"- {persona}:")
+            lineas.append(f"- <b>{html.escape(persona)}</b>:")
             persona_actual = persona
         if item["tipo"] == "puntual":
             fecha = item["fecha"].strftime("%d/%m/%Y")
@@ -770,22 +771,22 @@ async def comando_boda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def enviar_largo(
-    update: Update, texto: str, max_len: int = 4000
+    update: Update, texto: str, max_len: int = 4000, parse_mode: str | None = None
 ) -> None:
     """Envía un texto posiblemente largo fragmentándolo por líneas (límite 4096 de Telegram)."""
     if len(texto) <= max_len:
-        await update.effective_message.reply_text(texto)
+        await update.effective_message.reply_text(texto, parse_mode=parse_mode)
         return
     bloque: list[str] = []
     longitud = 0
     for linea in texto.split("\n"):
         if longitud + len(linea) + 1 > max_len and bloque:
-            await update.effective_message.reply_text("\n".join(bloque))
+            await update.effective_message.reply_text("\n".join(bloque), parse_mode=parse_mode)
             bloque, longitud = [], 0
         bloque.append(linea)
         longitud += len(linea) + 1
     if bloque:
-        await update.effective_message.reply_text("\n".join(bloque))
+        await update.effective_message.reply_text("\n".join(bloque), parse_mode=parse_mode)
 
 
 async def comando_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -805,7 +806,7 @@ async def comando_listap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         texto = texto_lista_personas(datos)
     except FechasError as exc:
         texto = f"No se puede leer fechas.yaml: {exc}"
-    await enviar_largo(update, texto)
+    await enviar_largo(update, texto, parse_mode="HTML")
 
 
 async def comando_borrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
