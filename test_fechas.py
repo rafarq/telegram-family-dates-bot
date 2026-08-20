@@ -401,9 +401,9 @@ def test_texto_lista_personas_agrupa_por_persona_y_avisa_del_borrado():
     texto = texto_lista_personas(datos)
 
     assert "Fechas por persona:" in texto
-    assert "- <b>Martín</b>:" in texto
+    assert "<b>Martín</b>:" in texto
     assert "   - Santo 20/08" in texto
-    assert "- <b>Lucas</b>:" in texto
+    assert "<b>Lucas</b>:" in texto
     assert "   - Cumpleaños 12/03" in texto
     assert "Para borrar una fecha, usa /lista y /borrar &lt;id&gt;." in texto
 

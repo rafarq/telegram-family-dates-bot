@@ -464,7 +464,7 @@ def texto_lista_personas(datos: dict[str, list[dict[str, Any]]]) -> str:
     for item in entradas:
         persona = _persona_de(item)
         if persona != persona_actual:
-            lineas.append(f"- <b>{html.escape(persona)}</b>:")
+            lineas.append(f"<b>{html.escape(persona)}</b>:")
             persona_actual = persona
         if item["tipo"] == "puntual":
             fecha = item["fecha"].strftime("%d/%m/%Y")
