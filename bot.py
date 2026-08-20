@@ -966,17 +966,20 @@ def generar_html_felicitacion(
         tipo = "aniversario"
     _, plantilla = elegir_tarjeta(tipo, estado)
     nombres = [_persona_de(item) for item in coincidentes]
+    if len(nombres) == 1:
+        nombre_html = nombres[0]
+    else:
+        nombre_html = ", ".join(nombres[:-1]) + " y " + nombres[-1]
     mensaje = texto_recordatorio(coincidentes, {})
+    # Texto plano sin etiquetas HTML: los saltos de línea se unen con " · "
+    mensaje_html = mensaje.replace("\n", " · ")
     meses_es = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
                 "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
     fecha = f"{hoy.day} de {meses_es[hoy.month - 1]}"
     return (
         plantilla.replace("{{TIPO}}", _ETIQUETA_TIPO[tipo])
-        .replace("{{NOMBRE}}", "<br>".join(nombres))
-        .replace(
-            "{{MENSAJE}}",
-            mensaje.replace("\n", "<br>").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
-        )
+        .replace("{{NOMBRE}}", nombre_html)
+        .replace("{{MENSAJE}}", mensaje_html)
         .replace("{{FECHA}}", fecha)
     )
 
@@ -1001,7 +1004,6 @@ async def aviso_diario(context: ContextTypes.DEFAULT_TYPE) -> str | None:
                 LOGGER.exception("Aviso diario %s: sin tarjetas para el tipo; se omite el HTML", hoy.isoformat())
                 html = None
         # Enviar primero y persistir la rotación solo si el envío ha tenido éxito.
-        await context.bot.send_message(destino, texto)
         if html is not None:
             try:
                 with tempfile.NamedTemporaryFile(
@@ -1011,11 +1013,14 @@ async def aviso_diario(context: ContextTypes.DEFAULT_TYPE) -> str | None:
                     ruta_html = f.name
                 with open(ruta_html, "rb") as fh:
                     await context.bot.send_document(
-                        destino, fh, filename="felicitacion.html"
+                        destino, fh, filename="felicitacion.html", caption=texto
                     )
                 os.unlink(ruta_html)
             except Exception:
                 LOGGER.exception("Aviso diario %s: no se pudo enviar el HTML", hoy.isoformat())
+                await context.bot.send_message(destino, texto)
+        else:
+            await context.bot.send_message(destino, texto)
         if any(_tipo_ocasion(c) != "puntual" for c in coincidentes):
             async with STATE_LOCK:
                 guardar_estado_atomico(estado)
