@@ -132,6 +132,12 @@ def validar_datos(datos: Any) -> dict[str, list[dict[str, Any]]]:
         )
 
     resultado = _datos_vacios()
+    secciones_validas = set(resultado.keys())
+    desconocidas = set(datos.keys()) - secciones_validas
+    if desconocidas:
+        raise FechasError(
+            f"Secciones no reconocidas en fechas.yaml: {', '.join(sorted(desconocidas))}."
+        )
     for seccion in resultado:
         entradas = datos.get(seccion, [])
         if entradas is None:
@@ -365,6 +371,21 @@ def entradas_ordenadas(
     return sorted(entradas, key=_clave_calendario)
 
 
+def _es_dia_de_celebracion(dia: int, mes: int, hoy: date) -> bool:
+    """¿Coincide el día/mes con hoy? El 29/02 se celebra el 28/02 en años no bisiestos."""
+    if dia == hoy.day and mes == hoy.month:
+        return True
+    import calendar
+
+    return (
+        mes == 2
+        and dia == 29
+        and hoy.month == 2
+        and hoy.day == 28
+        and not calendar.isleap(hoy.year)
+    )
+
+
 def fechas_de_hoy(
     datos: dict[str, list[dict[str, Any]]], hoy: date
 ) -> list[dict[str, Any]]:
@@ -372,17 +393,17 @@ def fechas_de_hoy(
     coincidentes.extend(
         {"tipo": "recurrente", **item}
         for item in datos["recurrentes"]
-        if item["dia"] == hoy.day and item["mes"] == hoy.month
+        if _es_dia_de_celebracion(item["dia"], item["mes"], hoy)
     )
     coincidentes.extend(
         {"tipo": "santo", **item}
         for item in datos["santos"]
-        if item["dia"] == hoy.day and item["mes"] == hoy.month
+        if _es_dia_de_celebracion(item["dia"], item["mes"], hoy)
     )
     coincidentes.extend(
         {"tipo": "boda", **item}
         for item in datos["bodas"]
-        if item["dia"] == hoy.day and item["mes"] == hoy.month
+        if _es_dia_de_celebracion(item["dia"], item["mes"], hoy)
     )
     coincidentes.extend(
         {"tipo": "puntual", **item}
@@ -748,6 +769,25 @@ async def comando_boda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def enviar_largo(
+    update: Update, texto: str, max_len: int = 4000
+) -> None:
+    """Envía un texto posiblemente largo fragmentándolo por líneas (límite 4096 de Telegram)."""
+    if len(texto) <= max_len:
+        await update.effective_message.reply_text(texto)
+        return
+    bloque: list[str] = []
+    longitud = 0
+    for linea in texto.split("\n"):
+        if longitud + len(linea) + 1 > max_len and bloque:
+            await update.effective_message.reply_text("\n".join(bloque))
+            bloque, longitud = [], 0
+        bloque.append(linea)
+        longitud += len(linea) + 1
+    if bloque:
+        await update.effective_message.reply_text("\n".join(bloque))
+
+
 async def comando_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     del context
     try:
@@ -755,7 +795,7 @@ async def comando_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         texto = texto_lista(datos, _ahora_madrid())
     except FechasError as exc:
         texto = f"No se puede leer fechas.yaml: {exc}"
-    await update.effective_message.reply_text(texto)
+    await enviar_largo(update, texto)
 
 
 async def comando_listap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -765,7 +805,7 @@ async def comando_listap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         texto = texto_lista_personas(datos)
     except FechasError as exc:
         texto = f"No se puede leer fechas.yaml: {exc}"
-    await update.effective_message.reply_text(texto)
+    await enviar_largo(update, texto)
 
 
 async def comando_borrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -781,8 +821,9 @@ async def comando_borrar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             datos = cargar_fechas()
             entradas = entradas_ordenadas(datos, _ahora_madrid())
             if identificador < 1 or identificador > len(entradas):
-                await update.effective_message.reply_text(
-                    "Ese id no es válido.\n\n" + texto_lista(datos, _ahora_madrid())
+                await enviar_largo(
+                    update,
+                    "Ese id no es válido.\n\n" + texto_lista(datos, _ahora_madrid()),
                 )
                 return
             elegida = entradas[identificador - 1]
@@ -848,7 +889,9 @@ async def descubrir_canal(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     async with STATE_LOCK:
         if obtener_chat_familiar() is not None:
             return
-        guardar_estado_atomico({"family_chat_id": chat.id})
+        estado = cargar_estado()
+        estado["family_chat_id"] = chat.id
+        guardar_estado_atomico(estado)
     propietario = _entero_env("OWNER_CHAT_ID")
     titulo = chat.title or "Canal sin título"
     LOGGER.info("Canal familiar vinculado automáticamente: %s (%s)", titulo, chat.id)
@@ -891,9 +934,11 @@ async def aviso_diario(context: ContextTypes.DEFAULT_TYPE) -> str | None:
                 LOGGER.info("Aviso diario %s: no hay fechas; no se envía ningún mensaje", hoy.isoformat())
                 return None
             coincidentes = fechas_de_hoy(cargar_fechas(), hoy)
-            if any(_tipo_ocasion(c) != "puntual" for c in coincidentes):
-                guardar_estado_atomico(estado)
+        # Enviar primero y persistir la rotación solo si el envío ha tenido éxito.
         await context.bot.send_message(destino, texto)
+        if any(_tipo_ocasion(c) != "puntual" for c in coincidentes):
+            async with STATE_LOCK:
+                guardar_estado_atomico(estado)
         LOGGER.info("Aviso diario %s: enviado con %d fecha(s)", hoy.isoformat(), len(coincidentes))
         return texto
     except Exception:

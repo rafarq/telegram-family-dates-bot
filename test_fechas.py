@@ -28,7 +28,7 @@ from bot import (
     validar_datos,
 )
 
-from bot import _persona_de
+from bot import _es_dia_de_celebracion, _persona_de
 
 
 def datos_vacios():
@@ -406,3 +406,68 @@ def test_texto_lista_personas_agrupa_por_persona_y_avisa_del_borrado():
     assert "- Lucas:" in texto
     assert "   - Cumpleaños 12/03" in texto
     assert "Para borrar una fecha, usa /lista y /borrar <id>." in texto
+
+
+def test_es_dia_de_celebracion_29_febrero_en_anio_no_bisiesto():
+    assert _es_dia_de_celebracion(29, 2, date(2026, 2, 28))
+    assert not _es_dia_de_celebracion(29, 2, date(2028, 2, 28))  # bisiesto: el 29 existe
+    assert not _es_dia_de_celebracion(29, 2, date(2026, 2, 27))
+
+
+def test_fechas_de_hoy_29_febrero_se_celebra_el_28():
+    datos = datos_vacios()
+    datos["recurrentes"] = [{"nombre": "Cumpleaños de Lucas", "dia": 29, "mes": 2}]
+    coincidentes = fechas_de_hoy(datos, date(2026, 2, 28))
+    assert len(coincidentes) == 1
+    assert coincidentes[0]["nombre"] == "Cumpleaños de Lucas"
+    # En año bisiesto, el 29/02 solo coincide el propio día 29
+    assert fechas_de_hoy(datos, date(2028, 2, 28)) == []
+    assert len(fechas_de_hoy(datos, date(2028, 2, 29))) == 1
+
+
+def test_validar_datos_rechaza_secciones_desconocidas():
+    with pytest.raises(FechasError, match="Secciones no reconocidas"):
+        validar_datos({"recurrentes": [], "cumples": []})
+
+
+def _update_fake(chat_id: int = 1, chat_type: str = "private", user_id: int = 99) -> object:
+    """Update falso mínimo con effective_chat y effective_message."""
+
+    class Chat:
+        id = chat_id
+        type = chat_type
+
+    class Msg:
+        async def reply_text(self, texto):
+            self.texto = texto
+
+    class Update:
+        effective_chat = Chat()
+        effective_message = Msg()
+        effective_user = type("U", (), {"id": user_id})()
+
+    return Update()
+
+
+def test_enviar_largo_fragmenta(monkeypatch):
+    texto = "\n".join(f"Línea {i} de relleno para superar el límite" for i in range(300))
+    update = _update_fake()
+    import bot
+
+    async def correr():
+        await bot.enviar_largo(update, texto, max_len=200)
+
+    import asyncio
+
+    asyncio.run(correr())
+    # Con 300 líneas ~40 chars y bloques de 200, debe haber varios mensajes
+    assert update.effective_message.texto
+
+
+def test_autorizado_para_escribir_solo_owner_o_canal(monkeypatch):
+    import bot
+
+    monkeypatch.setenv("OWNER_CHAT_ID", "42")
+    assert bot.autorizado_para_escribir(_update_fake(user_id=42))
+    assert not bot.autorizado_para_escribir(_update_fake(user_id=99))
+    assert bot.autorizado_para_escribir(_update_fake(chat_type="channel", user_id=99))
